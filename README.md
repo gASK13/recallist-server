@@ -38,7 +38,9 @@ All endpoints require authorization via the custom authorizer (either Cognito JW
 - PATCH `/item/{item}` → 200 marks as RESOLVED and sets `resolutionDate`; 404 if not found
 - DELETE `/item/{item}` → 204 on success; 404 if not found
 
-See `lambda/main.py` and `lambda/models/models.py` for request/response models. An OpenAPI generator script is available in `lambda/openapi.py` (produces `openapi.yaml` with API Gateway extensions).
+See `lambda/main.py` and `lambda/models/models.py` for request/response models. An OpenAPI generator script is available in `lambda/openapi.py` and produces two specs:
+- `lambda/openapi.yaml` (OpenAPI 3.0.0) — API Gateway import, includes AWS vendor extensions and custom authorizer wiring.
+- `lambda/openapi.gpt.yaml` (OpenAPI 3.1.0) — GPT/MCP friendly, no auth/security sections or AWS vendor extensions.
 
 ## Authorization
 Implemented as an API Gateway REQUEST authorizer (see `lambda_authorizer/main.py`). The authorizer sets `requestContext.authorizer.user_id` which the FastAPI app uses to scope all operations.

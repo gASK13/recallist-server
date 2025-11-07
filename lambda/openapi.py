@@ -43,6 +43,11 @@ if "schemas" in components and isinstance(components.get("schemas"), dict):
 # Create a GPT-friendly copy BEFORE adding AWS API Gateway specifics
 gpt_schema = copy.deepcopy(openapi_schema)
 
+# Set GPT spec to OpenAPI 3.1.0 (AWS API Gateway requires 3.0.0, which we keep on the main schema)
+gpt_schema["openapi"] = "3.1.0"
+# Optionally declare JSON Schema dialect for 3.1 (harmless if consumers ignore it)
+gpt_schema["jsonSchemaDialect"] = "https://json-schema.org/draft/2020-12/schema"
+
 # Strip authorization/security from GPT schema and ensure operationIds and rich content remain
 # - Remove securitySchemes, security requirements, and vendor extensions
 if "components" in gpt_schema and isinstance(gpt_schema["components"], dict):
