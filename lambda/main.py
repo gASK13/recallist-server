@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, HTTPException, Depends, Response
+from fastapi import FastAPI, Request, HTTPException, Depends, Response, Body
 from fastapi.responses import JSONResponse
 from mangum import Mangum
 from models import *
@@ -83,7 +83,19 @@ def _to_item_model(db_obj: dict) -> Item:
     )
 
 
-@app.get("/item/random", response_model=Item)
+@app.get(
+    "/item/random",
+    response_model=Item,
+    summary="Get a random unresolved item",
+    description="Returns one random item for the current user whose status is not RESOLVED.",
+    operation_id="getRandomItem",
+    responses={
+        200: {"description": "A random unresolved item is returned."},
+        404: {"description": "No unresolved items found for this user."},
+        401: {"description": "Unauthorized"}
+    },
+    tags=["items"]
+)
 async def get_random_item(current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
     logging.debug(f"Fetching random unresolved item for user {user_id}")
@@ -93,7 +105,18 @@ async def get_random_item(current_user: dict = Depends(get_current_user)):
     return _to_item_model(db_obj)
 
 
-@app.get("/items", response_model=ItemList)
+@app.get(
+    "/items",
+    response_model=ItemList,
+    summary="List all items",
+    description="Returns all items for the current user, including both NEW and RESOLVED entries.",
+    operation_id="listItems",
+    responses={
+        200: {"description": "List of items for the current user."},
+        401: {"description": "Unauthorized"}
+    },
+    tags=["items"]
+)
 async def get_items(current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
     logging.debug(f"Listing items for user {user_id}")
@@ -101,7 +124,19 @@ async def get_items(current_user: dict = Depends(get_current_user)):
     return ItemList(items=[_to_item_model(x) for x in items])
 
 
-@app.get("/item/{item}", response_model=Item)
+@app.get(
+    "/item/{item}",
+    response_model=Item,
+    summary="Get a specific item",
+    description="Fetch a specific item for the current user with details. Lookup is case-insensitive.",
+    operation_id="getItem",
+    responses={
+        200: {"description": "The requested item."},
+        404: {"description": "Item not found."},
+        401: {"description": "Unauthorized"}
+    },
+    tags=["items"]
+)
 async def get_item(item: str, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
     logging.debug(f"Getting item '{item}' for user {user_id}")
@@ -111,7 +146,18 @@ async def get_item(item: str, current_user: dict = Depends(get_current_user)):
     return _to_item_model(db_obj)
 
 
-@app.delete("/item/{item}")
+@app.delete(
+    "/item/{item}",
+    summary="Delete an item",
+    description="Deletes a specific item for the current user. Operation is idempotent: returns 404 if it does not exist.",
+    operation_id="deleteItem",
+    responses={
+        204: {"description": "Item deleted."},
+        404: {"description": "Item not found."},
+        401: {"description": "Unauthorized"}
+    },
+    tags=["items"]
+)
 async def delete_word(item: str, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
     logging.info(f"Deleting item '{item}' for user {user_id}")
@@ -121,7 +167,19 @@ async def delete_word(item: str, current_user: dict = Depends(get_current_user))
     return Response(status_code=204)
 
 
-@app.patch("/item/{item}", response_model=Item)
+@app.patch(
+    "/item/{item}",
+    response_model=Item,
+    summary="Resolve an item",
+    description="Marks the specified item as RESOLVED and sets its resolution date to now.",
+    operation_id="resolveItem",
+    responses={
+        200: {"description": "Item resolved."},
+        404: {"description": "Item not found."},
+        401: {"description": "Unauthorized"}
+    },
+    tags=["items"]
+)
 async def resolve_item(item: str, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
     logging.info(f"Resolving item '{item}' for user {user_id}")
@@ -131,8 +189,28 @@ async def resolve_item(item: str, current_user: dict = Depends(get_current_user)
     return _to_item_model(updated)
 
 
-@app.post("/item", response_model=Item, status_code=201)
-async def save_item(item: Item, current_user: dict = Depends(get_current_user)):
+@app.post(
+    "/item",
+    response_model=Item,
+    status_code=201,
+    summary="Add an item to the list",
+    description="Adds a new item to the list for the current user. The `item` text is stored case-insensitively for lookups while preserving original casing for display.",
+    operation_id="addItem",
+    responses={
+        201: {"description": "Item created."},
+        400: {"description": "Bad request (empty item text)."},
+        409: {"description": "Item already exists."},
+        401: {"description": "Unauthorized"}
+    },
+    tags=["items"]
+)
+async def save_item(
+    item: Item = Body(
+        ..., 
+        example={"item": "Read Atomic Habits"}
+    ), 
+    current_user: dict = Depends(get_current_user)
+):
     user_id = current_user["user_id"]
     if not item.item or not item.item.strip():
         raise HTTPException(status_code=400, detail="Item text is required")
