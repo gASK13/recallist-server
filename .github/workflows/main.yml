@@ -1,0 +1,53 @@
+# So far this is "simple one step deploy all pipeline"
+# To be broken down once we move from "dev only" state to "prod"
+name: Main deployment WF
+
+on: [push]
+
+jobs:
+  deploy:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    name: Deploy Infra and Lambda
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        name: Checkout
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies for the layer
+        run: |
+          mkdir -p layers/recallist_layer/python
+          pip install -r lambda/requirements.txt -t layers/recallist_layer/python
+          cd layers/recallist_layer && zip -r ../recallist_layer.zip python/*
+
+      - name: Generate OpenAPI schema
+        run: |
+          export PYTHONPATH=layers/recallist_layer/python
+          python lambda/openapi.py
+          mv openapi.yaml infra/        
+
+      - uses: aws-actions/configure-aws-credentials@v2
+        name: Setup AWS Credentials
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: infra
+
+      - name: Terraform Validate
+        run: terraform validate
+        working-directory: infra
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve
+        working-directory: infra
