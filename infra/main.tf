@@ -2,6 +2,10 @@ provider "aws" {
   region = "us-east-1" # Change as needed
 }
 
+data "aws_region" "current" {}
+
+data "aws_caller_identity" "current" {}
+
 terraform {
   backend "s3" {
     bucket  = "recallist-terraform-state"
@@ -128,6 +132,45 @@ resource "aws_lambda_function" "api_handler" {
   ]
 }
 
+# Authorizer Lambda package
+data "archive_file" "authorizer_zip" {
+  type        = "zip"
+  source_dir  = "../lambda_authorizer"
+  output_path = "lambda_authorizer.zip"
+}
+
+# Either-Or Authorizer Lambda
+resource "aws_lambda_function" "either_or_authorizer" {
+  function_name    = "recallist-either-or-authorizer"
+  role             = aws_iam_role.lambda_exec_role.arn
+  handler          = "main.handler"
+  runtime          = "python3.11"
+  filename         = data.archive_file.authorizer_zip.output_path
+  source_code_hash = data.archive_file.authorizer_zip.output_base64sha256
+  timeout          = 5
+  memory_size      = 128
+  environment {
+    variables = {
+      API_KEYS_TABLE = aws_dynamodb_table.api_keys_table.name
+      USER_POOL_ID   = aws_cognito_user_pool.recallist_user_pool.id
+      AWS_REGION     = data.aws_region.current.name
+    }
+  }
+}
+
+# Allow API Gateway to invoke the authorizer
+resource "aws_lambda_permission" "allow_apigw_authorizer" {
+  statement_id  = "AllowAPIGatewayInvokeAuthorizer"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.either_or_authorizer.function_name
+  principal     = "apigateway.amazonaws.com"
+}
+
+# Build API Gateway authorizer URI
+locals {
+  authorizer_uri = "arn:aws:apigateway:${data.aws_region.current.name}:lambda:path/2015-03-31/functions/${aws_lambda_function.either_or_authorizer.arn}/invocations"
+}
+
 #############################
 # REST API Gateway
 #############################
@@ -135,8 +178,8 @@ resource "aws_api_gateway_rest_api" "recallist_api" {
   name        = "recallist-rest-api"
   description = "Recallist REST API for vocabulary app"
   body = templatefile("openapi.yaml", {
-    lambda_arn = aws_lambda_function.api_handler.invoke_arn
-    cognito_user_pool_arn = aws_cognito_user_pool.recallist_user_pool.arn
+    lambda_arn     = aws_lambda_function.api_handler.invoke_arn
+    authorizer_uri = local.authorizer_uri
   })
 }
 

@@ -14,42 +14,30 @@ openapi_schema["info"] = {
     "version": "1.0.0"
 }
 
-# Add API Key security scheme
+# Components and security schemes
 components = openapi_schema.setdefault("components", {})
 security_schemes = components.setdefault("securitySchemes", {})
 
-security_schemes["CognitoAuthorizer"] = {
+# Define a single REQUEST authorizer that accepts either Authorization (Cognito JWT) or x-api-key
+security_schemes["EitherOrAuthorizer"] = {
     "type": "apiKey",
     "name": "Authorization",
     "in": "header",
-    "x-amazon-apigateway-authtype" : "cognito_user_pools",
+    "x-amazon-apigateway-authtype": "custom",
     "x-amazon-apigateway-authorizer": {
-        "type": "cognito_user_pools",
-        "providerARNs": [
-            "${cognito_user_pool_arn}"  # Replace this when deploying
-        ]
+        "type": "request",
+        "identitySource": "method.request.header.Authorization,method.request.header.x-api-key",
+        "authorizerUri": "${authorizer_uri}"
     }
 }
-
-security_schemes["ApiKeyAuth"] = {
-    "type": "apiKey",
-    "name": "x-api-key",
-    "in": "header"
-}
-
-# Optional: ensure API key source (header)
-openapi_schema["x-amazon-apigateway-api-key-source"] = "HEADER"
-
 
 # Rename schemas to remove hyphens
 if "schemas" in components:
     updated = {}
     for schema_name, schema_content in components["schemas"].items():
-        # Replace hyphens with empty strings to make names alphanumeric
         new_name = schema_name.replace("-", "")
         updated[new_name] = schema_content
 
-        # Update references in the paths
         for path_item in openapi_schema["paths"].values():
             for method_item in path_item.values():
                 rb = method_item.get("requestBody", {})
@@ -64,16 +52,15 @@ if "schemas" in components:
 
     components["schemas"] = updated
 
-# Add security and integration to each method
+# Apply security and integration to each method
 for path, methods in openapi_schema["paths"].items():
     for method, details in methods.items():
-        # Add Cognito security requirement
+        # Require our custom authorizer on all methods
         details["security"] = [
-            {"CognitoAuthorizer": []},
-            {"ApiKeyAuth": []}
+            {"EitherOrAuthorizer": []}
         ]
 
-        # Add x-amazon-apigateway-integration
+        # Lambda proxy integration
         details["x-amazon-apigateway-integration"] = {
             "uri": "${lambda_arn}",
             "httpMethod": "POST",
@@ -86,8 +73,6 @@ for path, methods in openapi_schema["paths"].items():
                 response["content"] = {
                     "application/json": {}
                 }
-
-
 
 # Save the schema to a YAML file
 with open("openapi.yaml", "w") as f:

@@ -11,16 +11,24 @@ app = FastAPI()
 handler = Mangum(app)
 
 # Dependency to extract user info from the request
+# Unified: prefer user_id provided by the custom authorizer, otherwise fall back to Cognito claims
+
 def get_current_user(request: Request):
-    # TBA - add handling of API KEY presence instead of Cognito claim
-    # TBA - in such case, get user from dynamo table if possible (we do not need email or username, just user_id)
-    claims = request.scope.get("aws.event", {}).get("requestContext", {}).get("authorizer", {}).get("claims", {})
-    if not claims:
+    authz = request.scope.get("aws.event", {}).get("requestContext", {}).get("authorizer", {})
+
+    # Prefer unified user_id set by our REQUEST authorizer (works for Cognito OR API key)
+    user_id = authz.get("user_id")
+
+    # Fallback to Cognito claims if present (in case we call without custom authorizer somewhere)
+    claims = authz.get("claims", {}) if isinstance(authz, dict) else {}
+    if not user_id and claims:
+        user_id = claims.get("sub")
+
+    if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
+
     return {
-        "user_id": claims.get("sub"),
-        "email": claims.get("email"),
-        "username": claims.get("cognito:username"),
+        "user_id": user_id
     }
 
 @app.middleware("http")
