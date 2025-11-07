@@ -1,10 +1,12 @@
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, Request, HTTPException, Depends, Response
 from fastapi.responses import JSONResponse
 from mangum import Mangum
 from models import *
 import db_service
 import time
 from utils import logging
+from botocore.exceptions import ClientError
+from typing import Dict, Any, List
 
 # FASTAPI app and AWS Lambda handler
 app = FastAPI()
@@ -70,33 +72,77 @@ async def http_exception_handler(request: Request, exc: HTTPException):
         content={"detail": exc.detail},
     )
 
+def _to_item_model(db_obj: dict) -> Item:
+    # Prefer original casing if stored, otherwise fallback to key
+    item_text = db_obj.get("display_item") or db_obj.get("item")
+    return Item(
+        item=item_text,
+        status=db_obj.get("status"),
+        createdDate=db_obj.get("createdDate"),
+        resolutionDate=db_obj.get("resolutionDate")
+    )
+
+
 @app.get("/item/random", response_model=Item)
 async def get_random_item(current_user: dict = Depends(get_current_user)):
-    # TBA - get random UNRESOLVED item from dynamo table based on User
-    return None
+    user_id = current_user["user_id"]
+    logging.debug(f"Fetching random unresolved item for user {user_id}")
+    db_obj = db_service.get_random_unresolved(user_id)
+    if not db_obj:
+        raise HTTPException(status_code=404, detail="No unresolved items found")
+    return _to_item_model(db_obj)
+
 
 @app.get("/items", response_model=ItemList)
 async def get_items(current_user: dict = Depends(get_current_user)):
-    # TBA - get all items (both resolved and unresolved) for User
-    return None
+    user_id = current_user["user_id"]
+    logging.debug(f"Listing items for user {user_id}")
+    items = db_service.list_items(user_id)
+    return ItemList(items=[_to_item_model(x) for x in items])
+
 
 @app.get("/item/{item}", response_model=Item)
 async def get_item(item: str, current_user: dict = Depends(get_current_user)):
-    # TBA - get item from dynamo table based on User
-    return None
+    user_id = current_user["user_id"]
+    logging.debug(f"Getting item '{item}' for user {user_id}")
+    db_obj = db_service.get_item(user_id, item)
+    if not db_obj:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return _to_item_model(db_obj)
+
 
 @app.delete("/item/{item}")
 async def delete_word(item: str, current_user: dict = Depends(get_current_user)):
-    # TBA - delete item from dynamo table based on User
-    return None
+    user_id = current_user["user_id"]
+    logging.info(f"Deleting item '{item}' for user {user_id}")
+    deleted = db_service.delete_item(user_id, item)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return Response(status_code=204)
 
-@app.patch("/item/{item}")
+
+@app.patch("/item/{item}", response_model=Item)
 async def resolve_item(item: str, current_user: dict = Depends(get_current_user)):
-    # TBA - mark item as RESOLVED in dynamo table based on User and set date to NOW
-    return None
+    user_id = current_user["user_id"]
+    logging.info(f"Resolving item '{item}' for user {user_id}")
+    updated = db_service.mark_resolved(user_id, item)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return _to_item_model(updated)
 
-@app.post("/item", response_model=Item)
+
+@app.post("/item", response_model=Item, status_code=201)
 async def save_item(item: Item, current_user: dict = Depends(get_current_user)):
-    # TBA - save item to dynamo table based on User, set createdDate to NOW
-    # in case of existing item, do not modify and fail!
-    return None
+    user_id = current_user["user_id"]
+    if not item.item or not item.item.strip():
+        raise HTTPException(status_code=400, detail="Item text is required")
+    logging.info(f"Creating item '{item.item}' for user {user_id}")
+    try:
+        created = db_service.put_item_if_absent(user_id, item.item)
+        return _to_item_model(created)
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code")
+        if code == "ConditionalCheckFailedException":
+            raise HTTPException(status_code=409, detail="Item already exists")
+        # Re-raise as HTTP 500 with message
+        raise HTTPException(status_code=500, detail=str(e))
