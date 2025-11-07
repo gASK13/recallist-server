@@ -90,8 +90,7 @@ def handler(event, context):
         if payload and payload.get("sub") and payload.get("iss"):
             # Optional basic sanity checks
             user_pool_id = os.environ.get("USER_POOL_ID")
-            region = os.environ.get("AWS_REGION", os.environ.get("REGION", "us-east-1"))
-            expected_iss_prefix = f"https://cognito-idp.{region}.amazonaws.com/{user_pool_id}" if user_pool_id else None
+            expected_iss_prefix = f"https://cognito-idp.us-east-1.amazonaws.com/{user_pool_id}" if user_pool_id else None
             if not expected_iss_prefix or str(payload.get("iss", "")).startswith(expected_iss_prefix):
                 return _allow(principal_id="cognitoUser", user_id=payload["sub"])  # prefer Cognito sub
 

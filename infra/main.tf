@@ -153,7 +153,6 @@ resource "aws_lambda_function" "either_or_authorizer" {
     variables = {
       API_KEYS_TABLE = aws_dynamodb_table.api_keys_table.name
       USER_POOL_ID   = aws_cognito_user_pool.recallist_user_pool.id
-      AWS_REGION     = data.aws_region.current.name
     }
   }
 }
