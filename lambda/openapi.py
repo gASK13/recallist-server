@@ -26,9 +26,8 @@ security_schemes["EitherOrAuthorizer"] = {
     "x-amazon-apigateway-authtype": "custom",
     "x-amazon-apigateway-authorizer": {
         "type": "request",
-        "identitySource": "method.request.header.Authorization,method.request.header.X-Api-Key,method.request.querystring.api_key",
-        "authorizerUri": "${authorizer_uri}",
-        "authorizerResultTtlInSeconds": 0
+        "identitySource": "method.request.header.Authorization",
+        "authorizerUri": "${authorizer_uri}"
     }
 }
 
