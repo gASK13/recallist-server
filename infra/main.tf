@@ -163,6 +163,7 @@ resource "aws_lambda_permission" "allow_apigw_authorizer" {
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.either_or_authorizer.function_name
   principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_api_gateway_rest_api.recallist_api.execution_arn}/authorizers/*"
 }
 
 # Build API Gateway authorizer URI
