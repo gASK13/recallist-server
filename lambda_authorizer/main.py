@@ -81,7 +81,6 @@ def handler(event, context):
     headers = { (k.lower() if isinstance(k, str) else k): v for k, v in headers.items() }
 
     auth_header = headers.get("authorization")
-    x_api_key = headers.get("x-api-key")
 
     # 1) Try Cognito JWT path (weak parsing; replace with proper verification in prod)
     token = _parse_bearer_token(auth_header) if auth_header else None
@@ -94,8 +93,8 @@ def handler(event, context):
             if not expected_iss_prefix or str(payload.get("iss", "")).startswith(expected_iss_prefix):
                 return _allow(principal_id="cognitoUser", user_id=payload["sub"])  # prefer Cognito sub
 
-    # 2) Try DynamoDB API key path
-    if x_api_key:
+    # 2) Try DynamoDB API key path - treat token as API KEY
+    if auth_header:
         api_keys_table = os.environ.get("API_KEYS_TABLE", "recallist_api_keys")
         ddb = boto3.resource("dynamodb")
         table = ddb.Table(api_keys_table)
@@ -110,7 +109,7 @@ def handler(event, context):
             resp = table.scan(
                 FilterExpression="#k = :v",
                 ExpressionAttributeNames={"#k": "api_key"},
-                ExpressionAttributeValues={":v": x_api_key},
+                ExpressionAttributeValues={":v": auth_header},
                 ProjectionExpression="user_id"
             )
             items = resp.get("Items", [])

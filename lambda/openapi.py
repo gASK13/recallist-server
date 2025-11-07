@@ -71,7 +71,7 @@ with open("openapi.gpt.yaml", "w") as gf:
 
 # Now augment the original schema with API Gateway security and integration
 security_schemes = components.setdefault("securitySchemes", {})
-# Define a single REQUEST authorizer that accepts either Authorization (Cognito JWT) or x-api-key
+# Define a single REQUEST authorizer that accepts either Authorization (Cognito JWT) or x-api-key (sent in the Authorization header)
 security_schemes["EitherOrAuthorizer"] = {
     "type": "apiKey",
     "name": "Authorization",
