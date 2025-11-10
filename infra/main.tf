@@ -200,9 +200,10 @@ resource "aws_cognito_user_pool" "recallist_user_pool" {
 
 # A client is needed to provide an audience for the JWT authorizer
 resource "aws_cognito_user_pool_client" "recallist_client" {
-  name         = "recallist-client"
-  user_pool_id = aws_cognito_user_pool.recallist_user_pool.id
-  generate_secret = false
+  name                  = "recallist-web-client"
+  user_pool_id          = aws_cognito_user_pool.recallist_user_pool.id
+  generate_secret       = false
+  explicit_auth_flows   = ["ALLOW_REFRESH_TOKEN_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_USER_PASSWORD_AUTH"]
 }
 
 resource "aws_apigatewayv2_authorizer" "jwt_cognito" {
