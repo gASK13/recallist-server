@@ -70,7 +70,7 @@ async def gpt_resolve_item(item: str, current_user: dict = Depends(get_current_u
 
 
 @gpt_app.get(
-    "/item/add",
+    "/add_item",
     response_model=Item,
     status_code=201,
     summary="Add an item to the list (GET)",
