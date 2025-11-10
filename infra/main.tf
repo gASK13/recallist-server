@@ -159,7 +159,7 @@ resource "aws_lambda_function" "either_or_authorizer" {
 
 # Build API Gateway authorizer URI
 locals {
-  authorizer_uri = "arn:aws:apigateway:${data.aws_region.current.name}:lambda:path/2015-03-31/functions/${aws_lambda_function.either_or_authorizer.arn}/invocations"
+  authorizer_uri = "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${aws_lambda_function.either_or_authorizer.arn}/invocations"
 }
 
 #############################
@@ -213,7 +213,7 @@ resource "aws_apigatewayv2_authorizer" "jwt_cognito" {
 
   jwt_configuration {
     audience = [aws_cognito_user_pool_client.recallist_client.id]
-    issuer   = "https://cognito-idp.${data.aws_region.current.name}.amazonaws.com/${aws_cognito_user_pool.recallist_user_pool.id}"
+    issuer   = "https://cognito-idp.us-east-1.amazonaws.com/${aws_cognito_user_pool.recallist_user_pool.id}"
   }
 }
 
