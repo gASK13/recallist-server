@@ -61,15 +61,19 @@ def _lookup_user_id_by_api_key(api_key: str) -> str | None:
 
 def handler(event, context):
     # REQUEST authorizer: validate x-api-key by looking it up in DynamoDB
-    headers = event.get("headers") or {}
-    headers = {(k.lower() if isinstance(k, str) else k): v for k, v in headers.items()}
+    try:
+        headers = event.get("headers") or {}
+        headers = {(k.lower() if isinstance(k, str) else k): v for k, v in headers.items()}
 
-    api_key = headers.get("x-api-key")
-    if not api_key:
+        api_key = headers.get("x-api-key")
+        if not api_key:
+            return _deny()
+
+        user_id = _lookup_user_id_by_api_key(api_key.strip())
+        if not user_id:
+            return _deny()
+
+        return _allow(principal_id="apiKeyUser", user_id=user_id)
+    except Exception:
+        print(f"Error in authorizer: {str(Exception)}")
         return _deny()
-
-    user_id = _lookup_user_id_by_api_key(api_key.strip())
-    if not user_id:
-        return _deny()
-
-    return _allow(principal_id="apiKeyUser", user_id=user_id)
