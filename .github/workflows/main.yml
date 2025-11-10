@@ -24,11 +24,6 @@ jobs:
           pip install -r lambda/requirements.txt -t layers/recallist_layer/python
           cd layers/recallist_layer && zip -r ../recallist_layer.zip python/*
 
-      - name: Generate OpenAPI schema
-        run: |
-          export PYTHONPATH=layers/recallist_layer/python
-          python lambda/openapi.py
-          mv openapi.yaml infra/        
 
       - uses: aws-actions/configure-aws-credentials@v2
         name: Setup AWS Credentials

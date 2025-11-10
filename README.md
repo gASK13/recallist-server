@@ -3,21 +3,24 @@
 Recallist is a lightweight Model Context Protocol (MCP) server that gives GPT-based agents a simple, persistent, per-user item list. Agents can add notes, mark them resolved, fetch a random unresolved item, and list everything — useful for micro-learning, spaced repetition, reminders, and lightweight personal memory.
 
 ## Key Features
-- Simple REST API built with FastAPI (served via AWS Lambda + API Gateway)
+- Single FastAPI app mounted as two sub-APIs: `/api/*` (main) and `/gpt/*` (GPT-focused)
+- `/api/*` uses standard REST verbs; `/gpt/*` is GET-only for simpler GPT tool usage
 - Per-user storage in DynamoDB with case-insensitive keys, preserving original casing for display
-- Random unresolved item retrieval for spaced repetition workflows
-- Either/Or auth: Cognito JWT (Authorization: Bearer …) or API Key (x-api-key)
-- Infrastructure-as-Code with Terraform
+- Auth split by sub-API:
+  - `/api/*`: Cognito JWT authorizer (Authorization: Bearer …)
+  - `/gpt/*`: Lightweight Lambda REQUEST authorizer that only checks token presence
+- Infrastructure-as-Code with Terraform using a single HTTP API Gateway (v2)
 
 ## High-level Architecture
 - FastAPI application in `lambda/`, adapted for Lambda with `mangum`.
-- Custom API Gateway REQUEST authorizer in `lambda_authorizer/` that accepts:
-  - Authorization: Bearer <Cognito JWT> (minimal parsing in sample; replace with JWKS verification for production)
-  - x-api-key header mapped to a `user_id` via DynamoDB `recallist_api_keys` table
+- Two sub-apps mounted under one root app:
+  - `/api` → for web app usage (JWT auth), with docs at `/api/docs` and schema at `/api/openapi.json` (public)
+  - `/gpt` → for GPT integrations (GET-only + token auth), with docs at `/gpt/docs` and schema at `/gpt/openapi.json` (public)
+- Custom Lambda REQUEST authorizer in `lambda_authorizer/` accepts any non-empty `Authorization` header and uses its value as `user_id`.
 - Data stored in DynamoDB:
   - Table: `recallist_items` (partition key: `user_id`, sort key: `item` [normalized lowercase])
-  - Table: `recallist_api_keys` (partition key: `api_key`, sort key: `user_id`)
-- Terraform definitions in `infra/main.tf` provision IAM, DynamoDB, API Gateway, and Lambda wiring.
+  - Table: `recallist_api_keys` (currently unused by authorizer; kept for possible future mapping)
+- Terraform definitions in `infra/main.tf` provision IAM, DynamoDB, HTTP API, Cognito, and Lambdas.
 
 ## Data Model (DynamoDB)
 Items are stored per user with a normalized item key for case-insensitive behavior.
@@ -29,30 +32,36 @@ Items are stored per user with a normalized item key for case-insensitive behavi
 - resolutionDate: ISO8601 UTC string (when resolved)
 
 ## API Overview
-All endpoints require authorization via the custom authorizer (either Cognito JWT or x-api-key).
+All endpoints require authorization except the documentation endpoints.
 
-- GET `/item/random` → 200 with a random unresolved item; 404 if none
-- GET `/items` → 200 with all items (resolved and unresolved)
-- GET `/item/{item}` → 200 with a single item; 404 if not found (case-insensitive)
-- POST `/item` → 201 creates a new item `{ item: string }`; 409 if duplicate; 400 if empty
-- PATCH `/item/{item}` → 200 marks as RESOLVED and sets `resolutionDate`; 404 if not found
-- DELETE `/item/{item}` → 204 on success; 404 if not found
+Main API (under `/api`):
+- GET `/api/item/random` → 200 with a random unresolved item; 404 if none
+- GET `/api/items` → 200 with all items (resolved and unresolved)
+- GET `/api/item/{item}` → 200 with a single item; 404 if not found (case-insensitive)
+- POST `/api/item` → 201 creates a new item `{ item: string }`; 409 if duplicate; 400 if empty
+- PATCH `/api/item/{item}` → 200 marks as RESOLVED and sets `resolutionDate`; 404 if not found
+- DELETE `/api/item/{item}` → 204 on success; 404 if not found
 
-See `lambda/main.py` and `lambda/models/models.py` for request/response models. An OpenAPI generator script is available in `lambda/openapi.py` and produces two specs:
-- `lambda/openapi.yaml` (OpenAPI 3.0.0) — API Gateway import, includes AWS vendor extensions and custom authorizer wiring.
-- `lambda/openapi.gpt.yaml` (OpenAPI 3.1.0) — GPT/MCP friendly, no auth/security sections or AWS vendor extensions.
+GPT API (under `/gpt`) — GET-only for simple tool calls:
+- GET `/gpt/item/random` → fetch random unresolved
+- GET `/gpt/items` → list all
+- GET `/gpt/item/{item}` → get single
+- GET `/gpt/item/add?item=...` → create new item
+- GET `/gpt/item/{item}/resolve` → mark as resolved
+- GET `/gpt/item/{item}/delete` → delete item (204 on success)
+
+Docs and schemas (public):
+- `/api/docs`, `/api/openapi.json`
+- `/gpt/docs`, `/gpt/openapi.json`
 
 ## Authorization
-Implemented as an API Gateway REQUEST authorizer (see `lambda_authorizer/main.py`). The authorizer sets `requestContext.authorizer.user_id` which the FastAPI app uses to scope all operations.
-- Cognito path: `Authorization: Bearer <JWT>` → extracts `sub` as `user_id` (sample implementation does not verify signature and does not currently work, since the pool has no clients)
-- API key path: `x-api-key: <key>` → looks up `user_id` in `recallist_api_keys` table (manual API key management for now)
+- `/api/*` uses a JWT authorizer configured with Cognito. The app extracts the `sub` claim as `user_id`.
+- `/gpt/*` uses a simple Lambda REQUEST authorizer that only checks the presence of the `Authorization` header and uses its value as `user_id` (no JWT validation).
 
 ## Environment Variables
 - `ITEM_TABLE` (default: `recallist_items`)
-- `API_KEYS_TABLE` (default: `recallist_api_keys`)
 - `LOG_LEVEL` (default: `INFO`)
 - `ENVIRONMENT` (default: `development`; affects log formatting)
-- `USER_POOL_ID` (used by authorizer for basic issuer check when using Cognito)
 
 ## Local Development
 Although designed for Lambda, you can run FastAPI locally for quick testing:
@@ -64,13 +73,8 @@ Although designed for Lambda, you can run FastAPI locally for quick testing:
   ```
   Note: In Lambda, the handler is created via `Mangum(app)`.
 
-To generate OpenAPI (with API Gateway extensions placeholders):
-```bash
-python lambda/openapi.py
-```
-
 ## Deployment (Terraform)
-The Terraform stack in `infra/main.tf` provisions the AWS resources. Typical flow:
+The Terraform stack in `infra/main.tf` provisions the AWS resources (IAM, DynamoDB, HTTP API, Cognito, and Lambda wiring). Typical flow:
 - Ensure the Lambda deployment ZIP contains the `lambda/` sources and dependencies.
 - `terraform init`
 - `terraform plan`

@@ -120,7 +120,7 @@ resource "aws_lambda_layer_version" "recallist_layer" {
 resource "aws_lambda_function" "api_handler" {
   function_name    = "recallist-api-handler"
   role             = aws_iam_role.lambda_exec_role.arn
-  handler          = "main.handler"
+  handler          = "app.handler"
   runtime          = "python3.11"
   filename         = data.archive_file.lambda_zip.output_path
   source_code_hash = data.archive_file.lambda_zip.output_base64sha256
@@ -141,7 +141,7 @@ data "archive_file" "authorizer_zip" {
 
 # Either-Or Authorizer Lambda
 resource "aws_lambda_function" "either_or_authorizer" {
-  function_name    = "recallist-either-or-authorizer"
+  function_name    = "recallist-token-authorizer"
   role             = aws_iam_role.lambda_exec_role.arn
   handler          = "main.handler"
   runtime          = "python3.11"
@@ -152,19 +152,10 @@ resource "aws_lambda_function" "either_or_authorizer" {
   environment {
     variables = {
       API_KEYS_TABLE = aws_dynamodb_table.api_keys_table.name
-      USER_POOL_ID   = aws_cognito_user_pool.recallist_user_pool.id
     }
   }
 }
 
-# Allow API Gateway to invoke the authorizer
-resource "aws_lambda_permission" "allow_apigw_authorizer" {
-  statement_id  = "AllowAPIGatewayInvokeAuthorizer"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.either_or_authorizer.function_name
-  principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_api_gateway_rest_api.recallist_api.execution_arn}/authorizers/*"
-}
 
 # Build API Gateway authorizer URI
 locals {
@@ -172,48 +163,24 @@ locals {
 }
 
 #############################
-# REST API Gateway
+# HTTP API (API Gateway v2)
 #############################
-resource "aws_api_gateway_rest_api" "recallist_api" {
-  name        = "recallist-rest-api"
-  description = "Recallist REST API for vocabulary app"
-  body = templatefile("openapi.yaml", {
-    lambda_arn     = aws_lambda_function.api_handler.invoke_arn
-    authorizer_uri = local.authorizer_uri
-  })
+resource "aws_apigatewayv2_api" "recallist_http_api" {
+  name          = "recallist-http-api"
+  protocol_type = "HTTP"
 }
 
-# Lambda permission for API Gateway
-resource "aws_lambda_permission" "allow_apigw" {
-  statement_id  = "AllowExecutionFromAPIGateway"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.api_handler.function_name
-  principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_api_gateway_rest_api.recallist_api.execution_arn}/*/*"
-}
-
-resource "aws_api_gateway_stage" "recallist_stage" {
-  deployment_id = aws_api_gateway_deployment.recallist_deployment.id
-  rest_api_id   = aws_api_gateway_rest_api.recallist_api.id
-  stage_name    = "dev"
-}
-
-# Deployment
-resource "aws_api_gateway_deployment" "recallist_deployment" {
-  depends_on  = [aws_api_gateway_rest_api.recallist_api]
-  rest_api_id = aws_api_gateway_rest_api.recallist_api.id
-
-  lifecycle {
-    create_before_destroy = true
-  }
-
-  triggers = {
-    always_deploy = timestamp()
-  }
+# Lambda proxy integration for the FastAPI handler
+resource "aws_apigatewayv2_integration" "lambda_integration" {
+  api_id                 = aws_apigatewayv2_api.recallist_http_api.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = aws_lambda_function.api_handler.invoke_arn
+  integration_method     = "POST"
+  payload_format_version = "2.0"
 }
 
 #############################
-# Cognito User Pool
+# Cognito (JWT) authorizer for /api/*
 #############################
 resource "aws_cognito_user_pool" "recallist_user_pool" {
   name = "recallist-user-pool"
@@ -231,19 +198,122 @@ resource "aws_cognito_user_pool" "recallist_user_pool" {
   auto_verified_attributes = ["email"]
 }
 
+# A client is needed to provide an audience for the JWT authorizer
+resource "aws_cognito_user_pool_client" "recallist_client" {
+  name         = "recallist-client"
+  user_pool_id = aws_cognito_user_pool.recallist_user_pool.id
+  generate_secret = false
+}
+
+resource "aws_apigatewayv2_authorizer" "jwt_cognito" {
+  api_id           = aws_apigatewayv2_api.recallist_http_api.id
+  name             = "recallist-cognito-jwt"
+  authorizer_type  = "JWT"
+  identity_sources = ["$request.header.Authorization"]
+
+  jwt_configuration {
+    audience = [aws_cognito_user_pool_client.recallist_client.id]
+    issuer   = "https://cognito-idp.${data.aws_region.current.name}.amazonaws.com/${aws_cognito_user_pool.recallist_user_pool.id}"
+  }
+}
+
 #############################
-# Update Lambda permissions to allow Cognito claims in the event
+# Lambda REQUEST authorizer for /gpt/* (simple token check)
 #############################
-resource "aws_lambda_permission" "allow_apigw_with_cognito" {
-  statement_id  = "AllowExecutionFromAPIGatewayWithCognito"
+resource "aws_lambda_permission" "allow_httpapi_authorizer" {
+  statement_id  = "AllowInvokeFromHttpApiAuthorizer"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.either_or_authorizer.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.recallist_http_api.execution_arn}/authorizers/*"
+}
+
+resource "aws_apigatewayv2_authorizer" "lambda_request" {
+  api_id                            = aws_apigatewayv2_api.recallist_http_api.id
+  name                              = "recallist-token-authorizer"
+  authorizer_type                   = "REQUEST"
+  authorizer_uri                    = local.authorizer_uri
+  identity_sources                  = ["$request.header.x-api-key"]
+  authorizer_payload_format_version = "2.0"
+  enable_simple_responses           = true
+}
+
+#############################
+# Routes
+#############################
+# Public docs for /api
+resource "aws_apigatewayv2_route" "api_openapi" {
+  api_id    = aws_apigatewayv2_api.recallist_http_api.id
+  route_key = "GET /api/openapi.json"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
+  authorization_type = "NONE"
+}
+
+resource "aws_apigatewayv2_route" "api_docs" {
+  api_id    = aws_apigatewayv2_api.recallist_http_api.id
+  route_key = "GET /api/docs"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
+  authorization_type = "NONE"
+}
+
+# Protected /api/* via Cognito JWT
+resource "aws_apigatewayv2_route" "api_proxy" {
+  api_id             = aws_apigatewayv2_api.recallist_http_api.id
+  route_key          = "ANY /api/{proxy+}"
+  target             = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt_cognito.id
+}
+
+# Public docs for /gpt
+resource "aws_apigatewayv2_route" "gpt_openapi" {
+  api_id    = aws_apigatewayv2_api.recallist_http_api.id
+  route_key = "GET /gpt/openapi.json"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
+  authorization_type = "NONE"
+}
+
+resource "aws_apigatewayv2_route" "gpt_docs" {
+  api_id    = aws_apigatewayv2_api.recallist_http_api.id
+  route_key = "GET /gpt/docs"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
+  authorization_type = "NONE"
+}
+
+# Protected /gpt/* via Lambda REQUEST authorizer
+resource "aws_apigatewayv2_route" "gpt_proxy" {
+  api_id             = aws_apigatewayv2_api.recallist_http_api.id
+  route_key          = "ANY /gpt/{proxy+}"
+  target             = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
+  authorization_type = "CUSTOM"
+  authorizer_id      = aws_apigatewayv2_authorizer.lambda_request.id
+}
+
+#############################
+# Stage (auto-deploy)
+#############################
+resource "aws_apigatewayv2_stage" "default" {
+  api_id = aws_apigatewayv2_api.recallist_http_api.id
+  name   = "$default"
+  auto_deploy = true
+}
+
+#############################
+# Permissions for the main Lambda to be invoked by HTTP API
+#############################
+resource "aws_lambda_permission" "allow_httpapi_invoke" {
+  statement_id  = "AllowInvokeFromHttpApi"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.api_handler.function_name
   principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_api_gateway_rest_api.recallist_api.execution_arn}/*/*"
+  source_arn    = "${aws_apigatewayv2_api.recallist_http_api.execution_arn}/*/*"
 }
 
 #############################
 # Outputs
 #############################
 
-# Empty, we do not copy it anywhere and it is safer to check in console / get it in the other app build :)
+output "http_api_endpoint" {
+  value = aws_apigatewayv2_api.recallist_http_api.api_endpoint
+  description = "HTTP API base URL"
+}
