@@ -10,17 +10,7 @@ api_keys_table = dynamodb.Table(API_KEYS_TABLE)
 
 def _allow(principal_id: str, user_id: str) -> Dict[str, Any]:
     return {
-        "principalId": principal_id,
-        "policyDocument": {
-            "Version": "2012-10-17",
-            "Statement": [
-                {
-                    "Action": "execute-api:Invoke",
-                    "Effect": "Allow",
-                    "Resource": "*"
-                }
-            ]
-        },
+        "isAuthorized": True,
         "context": {
             # Expose a unified field for downstream Lambda (FastAPI) to read
             # It will be available at event.requestContext.authorizer.user_id
@@ -32,17 +22,7 @@ def _allow(principal_id: str, user_id: str) -> Dict[str, Any]:
 
 def _deny() -> Dict[str, Any]:
     return {
-        "principalId": "anonymous",
-        "policyDocument": {
-            "Version": "2012-10-17",
-            "Statement": [
-                {
-                    "Action": "execute-api:Invoke",
-                    "Effect": "Deny",
-                    "Resource": "*"
-                }
-            ]
-        }
+        "isAuthorized": False
     }
 
 
