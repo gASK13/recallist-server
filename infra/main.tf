@@ -60,9 +60,7 @@ resource "aws_iam_role_policy" "lambda_custom_policy" {
 #############################
 resource "aws_dynamodb_table" "items_table" {
   name           = "recallist_items"
-  billing_mode   = "PROVISIONED"
-  read_capacity  = 1
-  write_capacity = 1
+  billing_mode   = "PAY_PER_REQUEST"
   hash_key       = "user_id"
   range_key      = "item"
 
@@ -82,9 +80,7 @@ resource "aws_dynamodb_table" "items_table" {
 #############################
 resource "aws_dynamodb_table" "api_keys_table" {
   name           = "recallist_api_keys"
-  billing_mode   = "PROVISIONED"
-  read_capacity  = 1
-  write_capacity = 1
+  billing_mode   = "PAY_PER_REQUEST"
   hash_key       = "api_key"
   range_key      = "user_id"
 
